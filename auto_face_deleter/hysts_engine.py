@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
 
+from .constants import PROJECT_ROOT
+from .io import open_image_rgba
+from .types import ProcessOptions
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 HYSTS_WORKER = r'''
 import json
@@ -47,21 +49,26 @@ if __name__ == "__main__":
 '''
 
 
+@dataclass
+class FaceDebug:
+    index: int
+    bbox: list[float]
+    keypoints: np.ndarray
+    face_mask: np.ndarray
+    feature_mask: np.ndarray
+    hair_mask: np.ndarray
+
+
 def default_hysts_python() -> Path:
-    return Path(".hysts-venv") / "Scripts" / "python.exe"
+    return Path(os.environ.get("HYSTS_PYTHON", PROJECT_ROOT / ".hysts-venv" / "Scripts" / "python.exe"))
 
 
-def gather_images(input_path: Path) -> list[Path]:
-    if input_path.is_file():
-        return [input_path]
-    images = [
-        path
-        for path in sorted(input_path.rglob("*"))
-        if path.is_file()
-        and path.suffix.lower() in IMAGE_EXTENSIONS
-        and "faceless" not in path.stem.lower()
-    ]
-    return images
+def hysts_device_from_options(options: ProcessOptions) -> str:
+    if options.hysts_device:
+        return options.hysts_device
+    if options.device == "cuda":
+        return "cuda:0"
+    return options.device
 
 
 def run_landmarks(paths: list[Path], hysts_python: Path, device: str) -> dict[str, list[dict]]:
@@ -86,14 +93,6 @@ def run_landmarks(paths: list[Path], hysts_python: Path, device: str) -> dict[st
         )
     payload = proc.stdout[marker_index + len(marker) :].strip()
     return json.loads(payload)
-
-
-def inward_alpha(mask: np.ndarray, edge_width: int) -> np.ndarray:
-    binary = (mask > 0).astype(np.uint8)
-    if edge_width <= 0:
-        return binary.astype(np.float32)
-    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 3)
-    return np.clip(dist / float(edge_width), 0.0, 1.0)
 
 
 def plausible_skin(rgb: np.ndarray) -> np.ndarray:
@@ -164,6 +163,7 @@ def estimate_skin_color(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np
         clean = face_mask & ~feature_mask
     if int(clean.sum()) < 20:
         clean = face_mask
+
     pixels = rgb[clean].reshape(-1, 3).astype(np.float32)
     hsv_pixels = cv2.cvtColor(pixels.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_RGB2HSV).reshape(-1, 3)
     bright = hsv_pixels[:, 2] >= np.percentile(hsv_pixels[:, 2], 58)
@@ -244,11 +244,8 @@ def hair_protect_mask(
     if xs.size == 0:
         return np.zeros_like(geometry_mask, dtype=bool)
 
-    x0, x1 = int(xs.min()), int(xs.max()) + 1
     y0, y1 = int(ys.min()), int(ys.max()) + 1
-    width = max(1, x1 - x0)
     height = max(1, y1 - y0)
-    yy, xx = np.ogrid[: rgb.shape[0], : rgb.shape[1]]
 
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     sat, val = hsv[:, :, 1], hsv[:, :, 2]
@@ -270,11 +267,8 @@ def hair_protect_mask(
         area = int(stats[label, cv2.CC_STAT_AREA])
         if area < max(8, int(geometry_mask.sum() * 0.00035)):
             continue
-        x = int(stats[label, cv2.CC_STAT_LEFT])
         y = int(stats[label, cv2.CC_STAT_TOP])
-        w = int(stats[label, cv2.CC_STAT_WIDTH])
         h = int(stats[label, cv2.CC_STAT_HEIGHT])
-        del x, w
         touches_top = y <= y0 + height * 0.18
         top_connected = touches_top and h > height * 0.025
         if top_connected:
@@ -288,8 +282,6 @@ def hair_protect_mask(
 def refine_face_mask(rgb: np.ndarray, geometry_mask: np.ndarray, feature_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     skin_color = estimate_skin_color(rgb, geometry_mask, feature_mask)
     hair = hair_protect_mask(rgb, geometry_mask, feature_mask, skin_color)
-    # Keep the mask contiguous. Hair strands that overlap eyes/brows are safer to repaint
-    # than to leave as holes, because the final target is a clean faceless surface.
     face = geometry_mask | feature_mask
     face = cv2.morphologyEx(face.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
     return face, hair
@@ -333,6 +325,10 @@ def make_skin_field(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.nda
     return cv2.bilateralFilter(field.clip(0, 255).astype(np.uint8), 13, 18, 16)
 
 
+def make_white_field(rgb: np.ndarray) -> np.ndarray:
+    return np.full_like(rgb, 255, dtype=np.uint8)
+
+
 def composite_alpha(mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
     binary = (mask > 0).astype(np.float32)
     alpha = cv2.GaussianBlur(binary, (0, 0), sigmaX=1.15, sigmaY=1.15)
@@ -343,84 +339,87 @@ def composite_alpha(mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
     return np.clip(alpha, 0.0, 1.0)
 
 
-def fill_face(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
-    field = make_skin_field(rgb, face_mask, feature_mask)
+def fill_face(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.ndarray, white: bool = False) -> np.ndarray:
+    field = make_white_field(rgb) if white else make_skin_field(rgb, face_mask, feature_mask)
     alpha = composite_alpha(face_mask, feature_mask)[:, :, None]
     out = rgb.astype(np.float32) * (1.0 - alpha) + field.astype(np.float32) * alpha
     return out.clip(0, 255).astype(np.uint8)
 
 
-def save_landmark_overlay(path: Path, output_path: Path, preds: list[dict]) -> None:
-    bgr = cv2.imread(str(path))
-    overlay = bgr.copy()
-    for pred in preds:
-        bbox = np.round(np.asarray(pred["bbox"][:4])).astype(int)
+def save_debug_images(
+    image_rgb: np.ndarray,
+    result_rgb: np.ndarray,
+    faces: list[FaceDebug],
+    debug_dir: Path,
+    stem: str,
+) -> None:
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    overlay = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    for face in faces:
+        bbox = np.round(np.asarray(face.bbox[:4])).astype(int)
         cv2.rectangle(overlay, tuple(bbox[:2]), tuple(bbox[2:]), (0, 255, 0), 2)
-        keypoints = np.asarray(pred["keypoints"], dtype=np.float32)
-        for idx, (x, y, score) in enumerate(keypoints):
+        for idx, (x, y, score) in enumerate(face.keypoints):
             color = (0, 0, 255) if score >= 0.3 else (0, 255, 255)
             pt = (int(round(x)), int(round(y)))
             cv2.circle(overlay, pt, 4, color, -1)
             cv2.putText(overlay, str(idx), (pt[0] + 4, pt[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output_path), overlay)
+
+    cv2.imwrite(str(debug_dir / f"{stem}_landmarks.png"), overlay)
+    for face in faces:
+        i = face.index
+        Image.fromarray(face.face_mask.astype(np.uint8) * 255).save(debug_dir / f"{stem}_face{i:02d}_face_mask.png")
+        Image.fromarray(face.feature_mask.astype(np.uint8) * 255).save(debug_dir / f"{stem}_face{i:02d}_feature_mask.png")
+        Image.fromarray(face.hair_mask.astype(np.uint8) * 255).save(debug_dir / f"{stem}_face{i:02d}_hair_protect_mask.png")
+    Image.fromarray(result_rgb).save(debug_dir / f"{stem}_result.png")
 
 
-def process(
-    input_path: Path,
-    output: Path,
-    landmarks_output: Path | None,
-    hysts_python: Path,
-    device: str,
-) -> None:
-    paths = gather_images(input_path)
-    if not paths:
-        raise RuntimeError(f"No input images found: {input_path}")
+class HystsFaceDeleter:
+    def __init__(self, options: ProcessOptions) -> None:
+        if options.lama:
+            raise RuntimeError("--lama/-l mode is reserved for the next implementation step and is not available yet.")
+        self.options = options
+        self.hysts_python = options.hysts_python or default_hysts_python()
+        self.hysts_device = hysts_device_from_options(options)
 
-    landmarks = run_landmarks(paths, hysts_python, device)
-    output.mkdir(parents=True, exist_ok=True)
-    if landmarks_output is not None:
-        landmarks_output.mkdir(parents=True, exist_ok=True)
+    def detect_images(self, image_paths: list[Path]) -> dict[str, list[dict]]:
+        return run_landmarks(image_paths, self.hysts_python, self.hysts_device)
 
-    for path in paths:
-        preds = landmarks.get(str(path), [])
-        if not preds:
-            print(f"No face: {path}", file=sys.stderr)
-            continue
-
-        rgba = np.array(Image.open(path).convert("RGBA"))
-        rgb = rgba[:, :, :3].copy()
+    def process_image(
+        self,
+        image_path: Path,
+        output_path: Path,
+        predictions: list[dict],
+        debug_dir: Path | None = None,
+    ) -> int:
+        rgba_image, _ = open_image_rgba(image_path)
+        rgba = np.array(rgba_image)
+        original_rgb = rgba[:, :, :3].copy()
+        result_rgb = original_rgb.copy()
         alpha = rgba[:, :, 3].copy()
-        pred = max(preds, key=lambda item: float(item["bbox"][4]))
-        keypoints = np.asarray(pred["keypoints"], dtype=np.float32)
-        geometry, feature = landmark_masks(rgb.shape[:2], keypoints)
-        face, hair = refine_face_mask(rgb, geometry > 0, feature > 0)
-        result = fill_face(rgb, face > 0, feature > 0)
 
-        stem = path.stem
-        Image.fromarray(np.dstack([result, alpha])).save(output / f"{stem}_faceless_probe.png")
-        cv2.imwrite(str(output / f"{stem}_face_mask.png"), face.astype(np.uint8) * 255)
-        cv2.imwrite(str(output / f"{stem}_feature_mask.png"), feature)
-        cv2.imwrite(str(output / f"{stem}_hair_protect_mask.png"), hair.astype(np.uint8) * 255)
-        if landmarks_output is not None:
-            save_landmark_overlay(path, landmarks_output / f"{stem}_landmarks.png", preds)
-        print(f"Processed {path}")
+        predictions = sorted(predictions, key=lambda item: float(item["bbox"][4]), reverse=True)
+        if self.options.max_faces is not None:
+            predictions = predictions[: self.options.max_faces]
 
+        faces: list[FaceDebug] = []
+        for index, pred in enumerate(predictions):
+            keypoints = np.asarray(pred["keypoints"], dtype=np.float32)
+            geometry, feature = landmark_masks(result_rgb.shape[:2], keypoints)
+            face, hair = refine_face_mask(result_rgb, geometry > 0, feature > 0)
+            result_rgb = fill_face(result_rgb, face, feature > 0, white=self.options.white)
+            faces.append(
+                FaceDebug(
+                    index=index,
+                    bbox=list(pred["bbox"]),
+                    keypoints=keypoints,
+                    face_mask=face,
+                    feature_mask=feature > 0,
+                    hair_mask=hair,
+                )
+            )
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Reproduce the hysts landmark faceless probe.")
-    parser.add_argument("input", type=Path, nargs="?", default=Path("examples"))
-    parser.add_argument("--output", type=Path, default=Path("qa_outputs") / "hysts_probe")
-    parser.add_argument("--landmarks-output", type=Path, default=Path("qa_outputs") / "hysts_landmarks")
-    parser.add_argument("--hysts-python", type=Path, default=Path(os.environ.get("HYSTS_PYTHON", default_hysts_python())))
-    parser.add_argument("--device", default="cuda:0")
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    process(args.input, args.output, args.landmarks_output, args.hysts_python, args.device)
-
-
-if __name__ == "__main__":
-    main()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(np.dstack([result_rgb, alpha]), mode="RGBA").save(output_path)
+        if self.options.save_debug and debug_dir is not None:
+            save_debug_images(original_rgb, result_rgb, faces, debug_dir, output_path.stem)
+        return len(predictions)

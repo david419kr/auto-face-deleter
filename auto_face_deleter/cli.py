@@ -7,10 +7,10 @@ import typer
 from rich.console import Console
 
 from .constants import DEFAULT_MODEL_DIR, PROJECT_ROOT
-from .models import download_all, download_lama, download_yolo, preflight as run_preflight
+from .models import download_lama, preflight as run_preflight
 from .pipeline import process_path
 from .qa import run_qa
-from .types import Aggression, Backend, ProcessOptions
+from .types import ProcessOptions
 
 console = Console()
 app = typer.Typer(no_args_is_help=True, help="Local anime face feature remover.")
@@ -18,98 +18,116 @@ models_app = typer.Typer(help="Download or inspect local models.")
 app.add_typer(models_app, name="models")
 
 
+def _exit_runtime_error(error: RuntimeError) -> None:
+    console.print(f"[red]Error:[/red] {error}")
+    raise typer.Exit(1)
+
+
 def _options(
-    backend: Backend,
-    device: str,
-    conf: float,
     recursive: bool,
-    aggression: Aggression,
     save_debug: bool,
-    mask_dilate: int,
-    feather: int,
     max_faces: int | None,
-    imgsz: int,
     model_dir: Path,
+    white: bool,
+    lama: bool,
+    device: str,
+    hysts_python: Path | None,
+    hysts_device: str | None,
 ) -> ProcessOptions:
     return ProcessOptions(
-        backend=backend,
-        device=device,
-        conf=conf,
         recursive=recursive,
-        aggression=aggression,
         save_debug=save_debug,
-        mask_dilate=mask_dilate,
-        feather=feather,
         max_faces=max_faces,
-        imgsz=imgsz,
         model_dir=model_dir,
+        white=False if lama else white,
+        lama=lama,
+        device=device,
+        hysts_python=hysts_python,
+        hysts_device=hysts_device,
     )
 
 
 @app.command()
 def process(
-    input_path: Annotated[Path, typer.Argument(..., help="Input image file or directory.")],
+    input_path: Annotated[Path, typer.Argument(help="Input image file or directory.")] = Path("input"),
     output: Annotated[Path, typer.Option("--output", "-o", help="Output file or directory.")] = Path("output"),
     recursive: Annotated[bool, typer.Option("--recursive/--no-recursive")] = True,
-    backend: Annotated[Backend, typer.Option("--backend", help="Face erase backend.")] = Backend.hybrid,
+    white: Annotated[
+        bool,
+        typer.Option("--white", "-w", help="Use pure white non-LaMa prefill instead of estimated skin color."),
+    ] = False,
+    lama: Annotated[
+        bool,
+        typer.Option("--lama", "-l", help="Use LaMa mode. Reserved for the next implementation step."),
+    ] = False,
     device: Annotated[str, typer.Option("--device", help="cuda, cuda:0, or cpu.")] = "cuda",
-    conf: Annotated[float, typer.Option("--conf", min=0.01, max=0.99)] = 0.25,
-    aggression: Annotated[Aggression, typer.Option("--aggression")] = Aggression.normal,
+    hysts_device: Annotated[
+        str | None,
+        typer.Option("--hysts-device", help="Detector device for the hysts environment. Defaults from --device."),
+    ] = None,
+    hysts_python: Annotated[Path | None, typer.Option("--hysts-python", help="Path to .hysts-venv Python.")] = None,
     save_debug: Annotated[bool, typer.Option("--save-debug/--no-save-debug")] = False,
-    mask_dilate: Annotated[int, typer.Option("--mask-dilate", min=0, max=24)] = 0,
-    feather: Annotated[int, typer.Option("--feather", min=0, max=80)] = 12,
     max_faces: Annotated[int | None, typer.Option("--max-faces", min=1)] = None,
-    imgsz: Annotated[int, typer.Option("--imgsz", min=320, max=2048)] = 1024,
     model_dir: Annotated[Path, typer.Option("--model-dir")] = DEFAULT_MODEL_DIR,
 ) -> None:
-    opts = _options(backend, device, conf, recursive, aggression, save_debug, mask_dilate, feather, max_faces, imgsz, model_dir)
-    processed, faces = process_path(input_path, output, opts)
-    console.print(f"[green]Done[/green] images={processed} faces={faces} output={output}")
+    opts = _options(recursive, save_debug, max_faces, model_dir, white, lama, device, hysts_python, hysts_device)
+    try:
+        processed, faces = process_path(input_path, output, opts)
+    except RuntimeError as error:
+        _exit_runtime_error(error)
+    mode = "lama" if lama else "white" if white else "skin"
+    console.print(f"[green]Done[/green] mode={mode} images={processed} faces={faces} output={output}")
 
 
 @app.command()
 def preflight(
     download_models: Annotated[bool, typer.Option("--download-models/--no-download-models")] = False,
     device: Annotated[str, typer.Option("--device")] = "cuda",
+    hysts_device: Annotated[str, typer.Option("--hysts-device")] = "cuda:0",
+    hysts_python: Annotated[Path | None, typer.Option("--hysts-python")] = None,
     model_dir: Annotated[Path, typer.Option("--model-dir")] = DEFAULT_MODEL_DIR,
 ) -> None:
-    run_preflight(model_dir=model_dir, device=device, download_models=download_models)
+    try:
+        run_preflight(
+            model_dir=model_dir,
+            device=device,
+            download_models=download_models,
+            hysts_python=hysts_python,
+            hysts_device=hysts_device,
+        )
+    except RuntimeError as error:
+        _exit_runtime_error(error)
 
 
 @models_app.command("download")
 def models_download(
-    detector_only: Annotated[bool, typer.Option("--detector-only/--all")] = False,
-    lama_only: Annotated[bool, typer.Option("--lama-only/--all-models")] = False,
+    lama: Annotated[bool, typer.Option("--lama", help="Download the future LaMa model. Currently same as default.")] = False,
     force: Annotated[bool, typer.Option("--force/--no-force")] = False,
     model_dir: Annotated[Path, typer.Option("--model-dir")] = DEFAULT_MODEL_DIR,
 ) -> None:
-    if detector_only and lama_only:
-        raise typer.BadParameter("--detector-only and --lama-only cannot be used together")
-    if detector_only:
-        path = download_yolo(model_dir, force=force)
-        console.print(f"[green]Detector ready:[/green] {path}")
-    elif lama_only:
+    del lama
+    try:
         path = download_lama(model_dir, force=force)
-        console.print(f"[green]Anime-LaMa ready:[/green] {path}")
-    else:
-        download_all(model_dir, force=force)
-        console.print(f"[green]All models ready:[/green] {model_dir.resolve()}")
+    except RuntimeError as error:
+        _exit_runtime_error(error)
+    console.print(f"[green]Anime-LaMa ready:[/green] {path}")
 
 
 @app.command()
 def qa(
     target: Annotated[str, typer.Argument(help="'examples' or 'tests'.")] = "tests",
     output: Annotated[Path, typer.Option("--output", "-o")] = PROJECT_ROOT / "test_outputs",
-    backend: Annotated[Backend, typer.Option("--backend")] = Backend.hybrid,
+    white: Annotated[bool, typer.Option("--white", "-w")] = False,
+    lama: Annotated[bool, typer.Option("--lama", "-l", help="Reserved for the next implementation step.")] = False,
     device: Annotated[str, typer.Option("--device")] = "cuda",
-    conf: Annotated[float, typer.Option("--conf", min=0.01, max=0.99)] = 0.25,
-    aggression: Annotated[Aggression, typer.Option("--aggression")] = Aggression.normal,
+    hysts_device: Annotated[str | None, typer.Option("--hysts-device")] = None,
+    hysts_python: Annotated[Path | None, typer.Option("--hysts-python")] = None,
     save_debug: Annotated[bool, typer.Option("--save-debug/--no-save-debug")] = True,
-    mask_dilate: Annotated[int, typer.Option("--mask-dilate", min=0, max=24)] = 0,
-    feather: Annotated[int, typer.Option("--feather", min=0, max=80)] = 12,
     max_faces: Annotated[int | None, typer.Option("--max-faces", min=1)] = None,
-    imgsz: Annotated[int, typer.Option("--imgsz", min=320, max=2048)] = 1024,
     model_dir: Annotated[Path, typer.Option("--model-dir")] = DEFAULT_MODEL_DIR,
 ) -> None:
-    opts = _options(backend, device, conf, True, aggression, save_debug, mask_dilate, feather, max_faces, imgsz, model_dir)
-    run_qa(target, output, opts)
+    opts = _options(True, save_debug, max_faces, model_dir, white, lama, device, hysts_python, hysts_device)
+    try:
+        run_qa(target, output, opts)
+    except RuntimeError as error:
+        _exit_runtime_error(error)

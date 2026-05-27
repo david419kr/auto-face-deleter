@@ -9,7 +9,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-uv run afd qa tests --output test_outputs --backend hybrid --device cuda --save-debug
+uv run afd qa tests --output test_outputs --save-debug
 if errorlevel 1 (
     echo Tests failed.
     pause

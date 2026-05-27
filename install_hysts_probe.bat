@@ -22,8 +22,9 @@ uv pip install --python "%PY%" mmdet==2.28.2 mmpose==0.29.0 anime-face-detector=
 uv pip install --python "%PY%" --force-reinstall --no-build-isolation xtcocotools==1.14.3 numpy==1.23.5 setuptools==68.2.2 || exit /b 1
 
 "%PY%" -c "import torch, numpy, mmcv, mmdet, mmpose, anime_face_detector; print('hysts probe env ok', torch.__version__, torch.cuda.is_available(), numpy.__version__, mmcv.__version__)" || exit /b 1
+"%PY%" -c "import anime_face_detector; anime_face_detector.create_detector('yolov3', device='cuda:0'); print('hysts detector ready')" || exit /b 1
 
 echo.
 echo Hysts probe environment is ready.
 echo Run:
-echo   uv run python tools\hysts_faceless_probe.py examples --output qa_outputs\hysts_probe --landmarks-output qa_outputs\hysts_landmarks
+echo   uv run afd qa examples --output example_outputs --save-debug

@@ -24,8 +24,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Downloading models and checking CUDA...
-uv run afd preflight --download-models --device cuda
+echo Installing hysts anime landmark detector environment...
+call install_hysts_probe.bat
+if errorlevel 1 (
+    echo Hysts detector install failed.
+    pause
+    exit /b 1
+)
+
+echo Checking CUDA and local detector environment...
+uv run afd preflight --device cuda --hysts-device cuda:0
 if errorlevel 1 (
     echo Preflight failed.
     pause

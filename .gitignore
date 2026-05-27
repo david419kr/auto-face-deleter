@@ -12,7 +12,9 @@ input/*
 output/
 outputs/
 example_outputs/
+example_outputs*/
 test_outputs/
+test_outputs*/
 qa_outputs/
 debug/
 

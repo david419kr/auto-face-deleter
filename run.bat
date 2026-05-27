@@ -9,20 +9,49 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if "%~1"=="" (
-    if not exist input mkdir input
-    echo Processing input\ to output\ ...
-    uv run afd process input --output output --recursive --backend hybrid --device cuda --conf 0.25 --aggression normal --save-debug
-    goto done
-)
+set "MODE_ARGS="
+set "HAD_INPUT=0"
 
 :loop
-if "%~1"=="" goto done
-echo Processing "%~1" to output\ ...
-uv run afd process "%~1" --output output --recursive --backend hybrid --device cuda --conf 0.25 --aggression normal --save-debug
+if "%~1"=="" goto after_args
+if /I "%~1"=="--white" (
+    set "MODE_ARGS=%MODE_ARGS% --white"
+    shift
+    goto loop
+)
+if /I "%~1"=="-w" (
+    set "MODE_ARGS=%MODE_ARGS% --white"
+    shift
+    goto loop
+)
+if /I "%~1"=="--lama" (
+    set "MODE_ARGS=%MODE_ARGS% --lama"
+    shift
+    goto loop
+)
+if /I "%~1"=="-l" (
+    set "MODE_ARGS=%MODE_ARGS% --lama"
+    shift
+    goto loop
+)
+set "HAD_INPUT=1"
+call :process_one "%~1"
 if errorlevel 1 goto failed
 shift
 goto loop
+
+:after_args
+if "%HAD_INPUT%"=="0" (
+    if not exist input mkdir input
+    call :process_one input
+    if errorlevel 1 goto failed
+)
+goto done
+
+:process_one
+echo Processing "%~1" to output\ ...
+uv run afd process "%~1" --output output --recursive %MODE_ARGS% --save-debug
+exit /b %errorlevel%
 
 :failed
 echo Processing failed.
