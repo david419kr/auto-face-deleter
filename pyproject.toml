@@ -1,0 +1,33 @@
+[project]
+name = "auto-face-deleter"
+version = "0.1.0"
+description = "Local CUDA anime face feature remover"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "huggingface-hub>=1.2.0,<2.0.0",
+    "numpy>=2.2.0,<3.0.0",
+    "opencv-python==4.13.0.92",
+    "pillow>=12.0.0,<13.0.0",
+    "rich>=14.2.0,<15.0.0",
+    "torch==2.11.0+cu128",
+    "torchvision==0.26.0+cu128",
+    "typer>=0.20.0,<0.21.0",
+    "ultralytics==8.4.56",
+]
+
+[project.scripts]
+afd = "auto_face_deleter.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
