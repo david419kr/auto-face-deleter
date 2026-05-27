@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-import tempfile
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,44 +8,12 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .constants import PROJECT_ROOT
 from .io import open_image_rgba
 from .types import ProcessOptions
 
 
-HYSTS_WORKER = r'''
-import json
-import sys
-from pathlib import Path
-
-import anime_face_detector
-import cv2
-
-
-def main() -> None:
-    device = sys.argv[1]
-    paths = [Path(arg) for arg in sys.argv[2:]]
-    detector = anime_face_detector.create_detector("yolov3", device=device)
-    result = {}
-    for path in paths:
-        image = cv2.imread(str(path))
-        if image is None:
-            raise RuntimeError(f"cv2.imread failed: {path}")
-        preds = detector(image)
-        result[str(path)] = [
-            {
-                "bbox": pred["bbox"].astype(float).tolist(),
-                "keypoints": pred["keypoints"].astype(float).tolist(),
-            }
-            for pred in preds
-        ]
-    print("AFD_JSON_START")
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()
-'''
+warnings.filterwarnings("ignore", message="On January 1, 2023, MMCV will release v2.0.0.*")
+warnings.filterwarnings("ignore", message='"ImageToTensor" pipeline is replaced by "DefaultFormatBundle".*')
 
 
 @dataclass
@@ -62,62 +26,25 @@ class FaceDebug:
     hair_mask: np.ndarray
 
 
-def default_hysts_python() -> Path:
-    return Path(os.environ.get("HYSTS_PYTHON", PROJECT_ROOT / ".hysts-venv" / "Scripts" / "python.exe"))
-
-
-def hysts_device_from_options(options: ProcessOptions) -> str:
-    if options.hysts_device:
-        return options.hysts_device
+def detector_device_from_options(options: ProcessOptions) -> str:
     if options.device == "cuda":
         return "cuda:0"
     return options.device
 
 
-def run_landmarks(paths: list[Path], hysts_python: Path, device: str) -> dict[str, list[dict]]:
-    if not hysts_python.exists():
-        raise RuntimeError(f"Hysts python not found: {hysts_python}. Run install_hysts_probe.bat first.")
-
-    with tempfile.TemporaryDirectory(prefix="afd_landmarks_") as tmp:
-        tmp_dir = Path(tmp)
-        worker_paths: list[Path] = []
-        path_map: dict[str, str] = {}
-        for index, path in enumerate(paths):
-            converted = tmp_dir / f"{index:06d}.png"
-            try:
-                with Image.open(path) as image:
-                    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
-                        rgba = image.convert("RGBA")
-                        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-                        background.alpha_composite(rgba)
-                        rgb = background.convert("RGB")
-                    else:
-                        rgb = image.convert("RGB")
-                    rgb.save(converted, format="PNG")
-            except OSError as error:
-                raise RuntimeError(f"Failed to read image for detection: {path}\n{error}") from error
-            worker_paths.append(converted)
-            path_map[str(converted)] = str(path)
-
-        proc = subprocess.run(
-            [str(hysts_python), "-", device, *[str(path) for path in worker_paths]],
-            input=HYSTS_WORKER,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    marker = "AFD_JSON_START"
-    marker_index = proc.stdout.rfind(marker)
-    if proc.returncode != 0 or marker_index < 0:
-        raise RuntimeError(
-            "hysts landmark worker failed\n"
-            f"returncode={proc.returncode}\n"
-            f"stdout={proc.stdout[-4000:]}\n"
-            f"stderr={proc.stderr[-4000:]}"
-        )
-    payload = proc.stdout[marker_index + len(marker) :].strip()
-    raw = json.loads(payload)
-    return {path_map[key]: value for key, value in raw.items()}
+def load_detector_image(path: Path) -> np.ndarray:
+    try:
+        with Image.open(path) as image:
+            if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                rgba = image.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                background.alpha_composite(rgba)
+                rgb = background.convert("RGB")
+            else:
+                rgb = image.convert("RGB")
+    except OSError as error:
+        raise RuntimeError(f"Failed to read image for detection: {path}\n{error}") from error
+    return cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
 
 
 def plausible_skin(rgb: np.ndarray) -> np.ndarray:
@@ -354,6 +281,12 @@ def make_white_field(rgb: np.ndarray) -> np.ndarray:
     return np.full_like(rgb, 255, dtype=np.uint8)
 
 
+def blend_field(rgb: np.ndarray, field: np.ndarray, mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
+    alpha = composite_alpha(mask, feature_mask)[:, :, None]
+    out = rgb.astype(np.float32) * (1.0 - alpha) + field.astype(np.float32) * alpha
+    return out.clip(0, 255).astype(np.uint8)
+
+
 def composite_alpha(mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
     binary = (mask > 0).astype(np.float32)
     alpha = cv2.GaussianBlur(binary, (0, 0), sigmaX=1.15, sigmaY=1.15)
@@ -366,9 +299,7 @@ def composite_alpha(mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
 
 def fill_face(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.ndarray, white: bool = False) -> np.ndarray:
     field = make_white_field(rgb) if white else make_skin_field(rgb, face_mask, feature_mask)
-    alpha = composite_alpha(face_mask, feature_mask)[:, :, None]
-    out = rgb.astype(np.float32) * (1.0 - alpha) + field.astype(np.float32) * alpha
-    return out.clip(0, 255).astype(np.uint8)
+    return blend_field(rgb, field, face_mask, feature_mask)
 
 
 def save_debug_images(
@@ -400,14 +331,27 @@ def save_debug_images(
 
 class HystsFaceDeleter:
     def __init__(self, options: ProcessOptions) -> None:
-        if options.lama:
-            raise RuntimeError("--lama/-l mode is reserved for the next implementation step and is not available yet.")
         self.options = options
-        self.hysts_python = options.hysts_python or default_hysts_python()
-        self.hysts_device = hysts_device_from_options(options)
+        self.device = detector_device_from_options(options)
+        try:
+            import anime_face_detector
+        except ImportError as error:
+            raise RuntimeError("anime-face-detector is not installed. Run install.bat first.") from error
+        self.detector = anime_face_detector.create_detector("yolov3", device=self.device)
 
     def detect_images(self, image_paths: list[Path]) -> dict[str, list[dict]]:
-        return run_landmarks(image_paths, self.hysts_python, self.hysts_device)
+        result: dict[str, list[dict]] = {}
+        for path in image_paths:
+            image = load_detector_image(path)
+            preds = self.detector(image)
+            result[str(path)] = [
+                {
+                    "bbox": pred["bbox"].astype(float).tolist(),
+                    "keypoints": pred["keypoints"].astype(float).tolist(),
+                }
+                for pred in preds
+            ]
+        return result
 
     def process_image(
         self,

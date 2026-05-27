@@ -29,12 +29,10 @@ def gather_images(input_path: Path, recursive: bool = False) -> list[Path]:
     return images
 
 
-MODE_SUFFIXES = ("_faceless-white", "_faceless-lama", "_faceless")
+MODE_SUFFIXES = ("_faceless-white", "_faceless")
 
 
-def mode_output_suffix(white: bool = False, lama: bool = False) -> str:
-    if lama:
-        return "_faceless-lama"
+def mode_output_suffix(white: bool = False) -> str:
     if white:
         return "_faceless-white"
     return "_faceless"

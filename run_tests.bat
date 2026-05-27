@@ -9,7 +9,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-uv run afd qa tests --output test_outputs --save-debug
+uv run --no-sync afd qa tests --output test_outputs --save-debug
 if errorlevel 1 (
     echo Tests failed.
     pause

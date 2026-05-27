@@ -24,16 +24,6 @@ if /I "%~1"=="-w" (
     shift
     goto loop
 )
-if /I "%~1"=="--lama" (
-    set "MODE_ARGS=%MODE_ARGS% --lama"
-    shift
-    goto loop
-)
-if /I "%~1"=="-l" (
-    set "MODE_ARGS=%MODE_ARGS% --lama"
-    shift
-    goto loop
-)
 set "HAD_INPUT=1"
 call :process_one "%~1"
 if errorlevel 1 goto failed
@@ -50,7 +40,7 @@ goto done
 
 :process_one
 echo Processing "%~1" to output\ ...
-uv run afd process "%~1" --output output --recursive %MODE_ARGS%
+uv run --no-sync afd process "%~1" --output output --recursive %MODE_ARGS%
 exit /b %errorlevel%
 
 :failed

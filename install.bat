@@ -16,29 +16,49 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Syncing Python environment...
-uv sync
+set "VENV=.venv"
+set "PY=%VENV%\Scripts\python.exe"
+
+echo Creating single Python 3.10 environment...
+uv venv --python 3.10 --clear "%VENV%"
 if errorlevel 1 (
-    echo uv sync failed.
+    echo Failed to create .venv.
     pause
     exit /b 1
 )
 
-echo Installing hysts anime landmark detector environment...
-call install_hysts_probe.bat
-if errorlevel 1 (
-    echo Hysts detector install failed.
-    pause
-    exit /b 1
-)
+echo Installing CUDA PyTorch and hysts detector stack...
+uv pip install --python "%PY%" pip wheel setuptools==68.2.2 numpy==1.23.5
+if errorlevel 1 goto failed
 
-echo Checking CUDA and local detector environment...
-uv run afd preflight --device cuda --hysts-device cuda:0
-if errorlevel 1 (
-    echo Preflight failed.
-    pause
-    exit /b 1
-)
+uv pip install --python "%PY%" torch==1.13.1+cu117 torchvision==0.14.1+cu117 --index-url https://download.pytorch.org/whl/cu117
+if errorlevel 1 goto failed
+
+uv pip install --python "%PY%" mmcv-full==1.7.0 -f https://download.openmmlab.com/mmcv/dist/cu117/torch1.13.0/index.html
+if errorlevel 1 goto failed
+
+uv pip install --python "%PY%" --no-build-isolation chumpy==0.70
+if errorlevel 1 goto failed
+
+uv pip install --python "%PY%" mmdet==2.28.2 mmpose==0.29.0 anime-face-detector==0.0.9
+if errorlevel 1 goto failed
+
+uv pip install --python "%PY%" --force-reinstall --no-build-isolation xtcocotools==1.14.3 numpy==1.23.5 setuptools==68.2.2
+if errorlevel 1 goto failed
+
+echo Installing Auto Face Deleter...
+uv pip install --python "%PY%" -e .
+if errorlevel 1 goto failed
+
+echo Checking CUDA and warming up detector...
+uv run --no-sync afd preflight --device cuda --warmup-detector
+if errorlevel 1 goto failed
 
 echo Install complete.
 pause
+exit /b 0
+
+:failed
+echo Install failed.
+pause
+exit /b 1
