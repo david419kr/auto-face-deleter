@@ -10,4 +10,5 @@ class ProcessOptions:
     max_faces: int | None
     white: bool = False
     crop: bool = False
+    exclude_mouth: bool = False
     device: str = "cuda"

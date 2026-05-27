@@ -8,11 +8,15 @@ Face removal outputs are PNG:
 
 - Default: `name_faceless.png`
 - White mode: `name_faceless-white.png`
+- Keep mouth and lower face: `name_faceless-exclude-mouth.png`
+- White keep mouth and lower face: `name_faceless-white-exclude-mouth.png`
 
 Crop mode outputs:
 
 - One detected face: `name_crop.png`
 - Zero or multiple detected faces: original file copied as `name_skipped.ext`
+
+`--exclude-mouth` is ignored in crop mode.
 
 ## Install
 
@@ -40,19 +44,28 @@ White fill mode:
 run-white.bat
 ```
 
+Keep the original mouth and lower face:
+
+```bat
+run-exclude-mouth.bat
+run-white-exclude-mouth.bat
+```
+
 Head crop mode:
 
 ```bat
 run-crop.bat
 ```
 
-You can also drag and drop image files or folders onto `run.bat`, `run-white.bat`, or `run-crop.bat`.
+You can also drag and drop image files or folders onto any `run*.bat` file.
 
 ## CLI
 
 ```bat
 uv run --no-sync afd process input --output output
 uv run --no-sync afd process input --output output --white
+uv run --no-sync afd process input --output output --exclude-mouth
+uv run --no-sync afd process input --output output --white --exclude-mouth
 uv run --no-sync afd process input --output output --crop
 ```
 

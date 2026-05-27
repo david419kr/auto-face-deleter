@@ -34,6 +34,16 @@ if /I "%~1"=="-c" (
     shift
     goto loop
 )
+if /I "%~1"=="--exclude-mouth" (
+    set "MODE_ARGS=%MODE_ARGS% --exclude-mouth"
+    shift
+    goto loop
+)
+if /I "%~1"=="-m" (
+    set "MODE_ARGS=%MODE_ARGS% --exclude-mouth"
+    shift
+    goto loop
+)
 set "HAD_INPUT=1"
 call :process_one "%~1"
 if errorlevel 1 goto failed

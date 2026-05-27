@@ -187,6 +187,28 @@ def landmark_masks(shape: tuple[int, int], keypoints: np.ndarray) -> tuple[np.nd
     return face, feature
 
 
+def mouth_preserve_mask(keypoints: np.ndarray, face_mask: np.ndarray) -> np.ndarray:
+    height, width = face_mask.shape
+    pts = keypoints[:, :2].astype(np.float32)
+    face_width = max(1.0, float(np.linalg.norm(pts[4] - pts[0])))
+    mouth_center = pts[[24, 25, 26, 27]].mean(axis=0)
+    chin = pts[2]
+    down = chin - mouth_center
+    down_length = float(np.linalg.norm(down))
+    if down_length < 1.0:
+        down = np.array([0.0, 1.0], dtype=np.float32)
+        down_length = 1.0
+    down /= down_length
+
+    yy, xx = np.indices((height, width), dtype=np.float32)
+    projection = (xx - mouth_center[0]) * down[0] + (yy - mouth_center[1]) * down[1]
+    nose_to_mouth = float(abs(np.dot(mouth_center - pts[23], down)))
+    mouth_band = min(max(3.0, face_width * 0.045), max(3.0, nose_to_mouth * 0.38))
+    preserve = (face_mask > 0) & (projection >= -mouth_band)
+    preserve = cv2.morphologyEx(preserve.astype(np.uint8), cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8)) > 0
+    return preserve & (face_mask > 0)
+
+
 def hair_protect_mask(
     rgb: np.ndarray,
     geometry_mask: np.ndarray,
@@ -469,8 +491,17 @@ class HystsFaceDeleter:
         for index, pred in enumerate(predictions):
             keypoints = np.asarray(pred["keypoints"], dtype=np.float32)
             geometry, feature = landmark_masks(result_rgb.shape[:2], keypoints)
-            face, hair = refine_face_mask(result_rgb, geometry > 0, feature > 0)
-            result_rgb = fill_face(result_rgb, face, feature > 0, white=self.options.white)
+            mouth_mask = (
+                mouth_preserve_mask(keypoints, geometry)
+                if self.options.exclude_mouth
+                else np.zeros(result_rgb.shape[:2], dtype=bool)
+            )
+            geometry_mask = (geometry > 0) & ~mouth_mask
+            feature_mask = (feature > 0) & ~mouth_mask
+            face, hair = refine_face_mask(result_rgb, geometry_mask, feature_mask)
+            result_rgb = fill_face(result_rgb, face, feature_mask, white=self.options.white)
+            if self.options.exclude_mouth:
+                result_rgb[mouth_mask] = original_rgb[mouth_mask]
             faces.append(
                 FaceDebug(
                     index=index,

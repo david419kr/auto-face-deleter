@@ -29,12 +29,23 @@ def gather_images(input_path: Path, recursive: bool = False) -> list[Path]:
     return images
 
 
-MODE_SUFFIXES = ("_faceless-white", "_faceless", "_crop", "_skipped")
+MODE_SUFFIXES = (
+    "_faceless-white-exclude-mouth",
+    "_faceless-exclude-mouth",
+    "_faceless-white",
+    "_faceless",
+    "_crop",
+    "_skipped",
+)
 
 
-def mode_output_suffix(white: bool = False, crop: bool = False) -> str:
+def mode_output_suffix(white: bool = False, crop: bool = False, exclude_mouth: bool = False) -> str:
     if crop:
         return "_crop"
+    if white and exclude_mouth:
+        return "_faceless-white-exclude-mouth"
+    if exclude_mouth:
+        return "_faceless-exclude-mouth"
     if white:
         return "_faceless-white"
     return "_faceless"

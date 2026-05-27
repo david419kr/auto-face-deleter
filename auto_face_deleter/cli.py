@@ -27,6 +27,7 @@ def _options(
     max_faces: int | None,
     white: bool,
     crop: bool,
+    exclude_mouth: bool,
     device: str,
 ) -> ProcessOptions:
     return ProcessOptions(
@@ -35,6 +36,7 @@ def _options(
         max_faces=max_faces,
         white=False if crop else white,
         crop=crop,
+        exclude_mouth=False if crop else exclude_mouth,
         device=device,
     )
 
@@ -52,16 +54,29 @@ def process(
         bool,
         typer.Option("--crop", "-c", help="Crop away the detected head instead of filling the face."),
     ] = False,
+    exclude_mouth: Annotated[
+        bool,
+        typer.Option("--exclude-mouth", "-m", help="Keep the original mouth while removing other face features."),
+    ] = False,
     device: Annotated[str, typer.Option("--device", help="cuda, cuda:0, or cpu.")] = "cuda",
     save_debug: Annotated[bool, typer.Option("--save-debug/--no-save-debug")] = False,
     max_faces: Annotated[int | None, typer.Option("--max-faces", min=1)] = None,
 ) -> None:
-    opts = _options(recursive, save_debug, max_faces, white, crop, device)
+    opts = _options(recursive, save_debug, max_faces, white, crop, exclude_mouth, device)
     try:
         processed, faces = process_path(input_path, output, opts)
     except RuntimeError as error:
         _exit_runtime_error(error)
-    mode = "crop" if crop else "white" if white else "skin"
+    if crop:
+        mode = "crop"
+    elif white and exclude_mouth:
+        mode = "white-exclude-mouth"
+    elif white:
+        mode = "white"
+    elif exclude_mouth:
+        mode = "exclude-mouth"
+    else:
+        mode = "skin"
     console.print(f"[green]Done[/green] mode={mode} images={processed} faces={faces} output={output}")
 
 
@@ -82,11 +97,12 @@ def qa(
     output: Annotated[Path, typer.Option("--output", "-o")] = PROJECT_ROOT / "test_outputs",
     white: Annotated[bool, typer.Option("--white", "-w")] = False,
     crop: Annotated[bool, typer.Option("--crop", "-c")] = False,
+    exclude_mouth: Annotated[bool, typer.Option("--exclude-mouth", "-m")] = False,
     device: Annotated[str, typer.Option("--device")] = "cuda",
     save_debug: Annotated[bool, typer.Option("--save-debug/--no-save-debug")] = True,
     max_faces: Annotated[int | None, typer.Option("--max-faces", min=1)] = None,
 ) -> None:
-    opts = _options(True, save_debug, max_faces, white, crop, device)
+    opts = _options(True, save_debug, max_faces, white, crop, exclude_mouth, device)
     try:
         run_qa(target, output, opts)
     except RuntimeError as error:
