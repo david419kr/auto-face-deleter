@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def main() -> None:
     result = {}
     for path in paths:
         image = cv2.imread(str(path))
+        if image is None:
+            raise RuntimeError(f"cv2.imread failed: {path}")
         preds = detector(image)
         result[str(path)] = [
             {
@@ -75,13 +78,34 @@ def run_landmarks(paths: list[Path], hysts_python: Path, device: str) -> dict[st
     if not hysts_python.exists():
         raise RuntimeError(f"Hysts python not found: {hysts_python}. Run install_hysts_probe.bat first.")
 
-    proc = subprocess.run(
-        [str(hysts_python), "-", device, *[str(path) for path in paths]],
-        input=HYSTS_WORKER,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    with tempfile.TemporaryDirectory(prefix="afd_landmarks_") as tmp:
+        tmp_dir = Path(tmp)
+        worker_paths: list[Path] = []
+        path_map: dict[str, str] = {}
+        for index, path in enumerate(paths):
+            converted = tmp_dir / f"{index:06d}.png"
+            try:
+                with Image.open(path) as image:
+                    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                        rgba = image.convert("RGBA")
+                        background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                        background.alpha_composite(rgba)
+                        rgb = background.convert("RGB")
+                    else:
+                        rgb = image.convert("RGB")
+                    rgb.save(converted, format="PNG")
+            except OSError as error:
+                raise RuntimeError(f"Failed to read image for detection: {path}\n{error}") from error
+            worker_paths.append(converted)
+            path_map[str(converted)] = str(path)
+
+        proc = subprocess.run(
+            [str(hysts_python), "-", device, *[str(path) for path in worker_paths]],
+            input=HYSTS_WORKER,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     marker = "AFD_JSON_START"
     marker_index = proc.stdout.rfind(marker)
     if proc.returncode != 0 or marker_index < 0:
@@ -92,7 +116,8 @@ def run_landmarks(paths: list[Path], hysts_python: Path, device: str) -> dict[st
             f"stderr={proc.stderr[-4000:]}"
         )
     payload = proc.stdout[marker_index + len(marker) :].strip()
-    return json.loads(payload)
+    raw = json.loads(payload)
+    return {path_map[key]: value for key, value in raw.items()}
 
 
 def plausible_skin(rgb: np.ndarray) -> np.ndarray:
@@ -419,7 +444,7 @@ class HystsFaceDeleter:
             )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        Image.fromarray(np.dstack([result_rgb, alpha]), mode="RGBA").save(output_path)
+        Image.fromarray(np.dstack([result_rgb, alpha]), mode="RGBA").save(output_path, format="PNG")
         if self.options.save_debug and debug_dir is not None:
             save_debug_images(original_rgb, result_rgb, faces, debug_dir, output_path.stem)
         return len(predictions)

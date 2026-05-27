@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.console import Console
 
 from .hysts_engine import HystsFaceDeleter
-from .io import gather_images, resolve_output_path
+from .io import gather_images, mode_output_suffix, resolve_output_path
 from .types import ProcessOptions
 
 console = Console()
@@ -18,9 +18,11 @@ def process_path(input_path: Path, output: Path, options: ProcessOptions) -> tup
     processed = 0
     faces = 0
     debug_root = output / "debug" if output.suffix == "" else output.parent / "debug"
+    suffix = mode_output_suffix(white=options.white, lama=options.lama)
+    reserved_outputs: set[Path] = set()
 
     for image_path in images:
-        output_path = resolve_output_path(input_path, image_path, output, total=len(images))
+        output_path = resolve_output_path(input_path, image_path, output, suffix=suffix, reserved=reserved_outputs)
         console.print(f"[cyan]Processing[/cyan] {image_path} -> {output_path}")
         detected = deleter.process_image(
             image_path,

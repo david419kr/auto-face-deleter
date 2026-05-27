@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_DIR = Path(os.environ.get("AFD_MODEL_DIR", PROJECT_ROOT / "models"))
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".tif", ".tiff"}
 
 ANIME_LAMA_URL = (
     "https://github.com/Sanster/models/releases/download/"

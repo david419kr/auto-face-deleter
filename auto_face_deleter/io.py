@@ -29,15 +29,55 @@ def gather_images(input_path: Path, recursive: bool = False) -> list[Path]:
     return images
 
 
-def resolve_output_path(input_root: Path, image_path: Path, output: Path, total: int) -> Path:
-    if total == 1 and output.suffix.lower() in IMAGE_EXTENSIONS:
-        return output
+MODE_SUFFIXES = ("_faceless-white", "_faceless-lama", "_faceless")
 
-    if input_root.is_dir():
+
+def mode_output_suffix(white: bool = False, lama: bool = False) -> str:
+    if lama:
+        return "_faceless-lama"
+    if white:
+        return "_faceless-white"
+    return "_faceless"
+
+
+def apply_mode_suffix(stem: str, suffix: str) -> str:
+    for existing in MODE_SUFFIXES:
+        if stem.endswith(existing):
+            stem = stem[: -len(existing)]
+            break
+    return f"{stem}{suffix}"
+
+
+def unique_output_path(path: Path, reserved: set[Path]) -> Path:
+    candidate = path
+    counter = 1
+    while candidate.exists() or candidate.resolve() in reserved:
+        candidate = path.with_name(f"{path.stem} ({counter}){path.suffix}")
+        counter += 1
+    reserved.add(candidate.resolve())
+    return candidate
+
+
+def resolve_output_path(
+    input_root: Path,
+    image_path: Path,
+    output: Path,
+    suffix: str,
+    reserved: set[Path],
+) -> Path:
+    if output.suffix.lower() in IMAGE_EXTENSIONS:
+        target_dir = output.parent
+        stem = output.stem
+    elif input_root.is_dir():
         relative = image_path.relative_to(input_root)
+        target_dir = output / relative.parent
+        stem = relative.stem
     else:
-        relative = image_path.name
-    return output / relative
+        target_dir = output
+        stem = image_path.stem
+
+    target = target_dir / f"{apply_mode_suffix(stem, suffix)}.png"
+    return unique_output_path(target, reserved)
 
 
 def open_image_rgba(path: Path) -> tuple[Image.Image, bool]:

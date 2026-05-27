@@ -4,6 +4,8 @@ Windows + NVIDIA CUDA 환경에서 anime풍 일러스트의 얼굴 특징을 로
 
 목표는 `examples/*_faceless.png`처럼 얼굴형은 유지하면서 눈, 눈썹, 코, 입, 홍조, 눈물 같은 얼굴 특징을 지우는 것입니다. 최악의 경우 머리카락 일부가 바뀌는 것보다 얼굴 특징이 남는 것을 더 큰 실패로 봅니다.
 
+입력은 최소 `png`, `jpg`, `jpeg`, `webp`, `avif`를 지원합니다. 출력은 입력 확장자와 관계없이 항상 PNG로 저장합니다.
+
 ## 설치
 
 1. NVIDIA 드라이버가 설치되어 있고 `nvidia-smi`가 동작하는지 확인합니다.
@@ -31,14 +33,21 @@ uv run afd process tests --output test_outputs --save-debug
 
 ```bat
 run.bat --white
+run-white.bat
 uv run afd process tests --output test_outputs_white --white --save-debug
+```
+
+LaMa 예약 모드 wrapper:
+
+```bat
+run-lama.bat
 ```
 
 단일 파일:
 
 ```bat
-uv run afd process tests\01_reika_original.png --output output\01_reika_faceless.png --save-debug
-uv run afd process tests\01_reika_original.png --output output\01_reika_white.png --white --save-debug
+uv run afd process tests\01_reika_original.jpg --output output --save-debug
+uv run afd process tests\01_reika_original.webp --output output --white --save-debug
 ```
 
 빠른 로컬 검증:
@@ -53,6 +62,8 @@ run_tests.bat
 - `--white`, `-w`: 피부색을 추정하지 않고 pure white로 얼굴 영역을 채웁니다.
 - `--lama`, `-l`: 예약된 옵션입니다. 다음 단계에서 LaMa/IOPaint prefill 모드로 연결할 예정이며, 현재는 명확한 에러로 중단합니다.
 - `-l -w`를 같이 넘기면 LaMa 모드가 우선입니다. 현재 구현에서는 LaMa 미구현 에러가 납니다.
+- 출력 파일명은 기본 모드 `{파일명}_faceless.png`, white 모드 `{파일명}_faceless-white.png`, LaMa 모드 `{파일명}_faceless-lama.png` 형식입니다.
+- 같은 출력 파일명이 이미 있거나 같은 batch 안에서 겹치면 ` (1)`, ` (2)`를 붙여 덮어쓰지 않습니다.
 - `--max-faces N`: 이미지당 처리할 최대 얼굴 수입니다.
 - `--save-debug`: `output/debug/`에 landmarks, face mask, feature mask, hair protect mask, result 이미지를 저장합니다.
 - `--device cuda`: 기본값. CUDA가 없으면 실패합니다. 조용히 CPU로 폴백하지 않습니다.
