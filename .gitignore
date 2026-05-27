@@ -9,6 +9,7 @@ input/*
 !input/.gitkeep
 output/
 outputs/
+examples/
 example_outputs/
 example_outputs*/
 test_outputs/
