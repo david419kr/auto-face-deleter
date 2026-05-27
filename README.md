@@ -1,13 +1,18 @@
 # Auto Face Deleter
 
-Local Windows CUDA tool for removing anime-style facial features from images. It detects anime face landmarks locally and fills the face area with either estimated skin color or pure white.
+Local Windows CUDA tool for simple anime face cleanup. It detects anime face landmarks locally and can either remove facial features or crop away the whole head.
 
 Supported inputs: `png`, `jpg`, `jpeg`, `webp`, `avif`, `bmp`, `tif`, `tiff`.
 
-Outputs are always PNG:
+Face removal outputs are PNG:
 
 - Default: `name_faceless.png`
 - White mode: `name_faceless-white.png`
+
+Crop mode outputs:
+
+- One detected face: `name_crop.png`
+- Zero or multiple detected faces: original file copied as `name_skipped.ext`
 
 ## Install
 
@@ -35,13 +40,20 @@ White fill mode:
 run-white.bat
 ```
 
-You can also drag and drop image files or folders onto `run.bat` or `run-white.bat`.
+Head crop mode:
+
+```bat
+run-crop.bat
+```
+
+You can also drag and drop image files or folders onto `run.bat`, `run-white.bat`, or `run-crop.bat`.
 
 ## CLI
 
 ```bat
 uv run --no-sync afd process input --output output
 uv run --no-sync afd process input --output output --white
+uv run --no-sync afd process input --output output --crop
 ```
 
 Useful options:

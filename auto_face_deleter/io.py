@@ -29,10 +29,12 @@ def gather_images(input_path: Path, recursive: bool = False) -> list[Path]:
     return images
 
 
-MODE_SUFFIXES = ("_faceless-white", "_faceless")
+MODE_SUFFIXES = ("_faceless-white", "_faceless", "_crop", "_skipped")
 
 
-def mode_output_suffix(white: bool = False) -> str:
+def mode_output_suffix(white: bool = False, crop: bool = False) -> str:
+    if crop:
+        return "_crop"
     if white:
         return "_faceless-white"
     return "_faceless"
@@ -62,6 +64,7 @@ def resolve_output_path(
     output: Path,
     suffix: str,
     reserved: set[Path],
+    extension: str = ".png",
 ) -> Path:
     if output.suffix.lower() in IMAGE_EXTENSIONS:
         target_dir = output.parent
@@ -74,7 +77,9 @@ def resolve_output_path(
         target_dir = output
         stem = image_path.stem
 
-    target = target_dir / f"{apply_mode_suffix(stem, suffix)}.png"
+    if not extension.startswith("."):
+        extension = f".{extension}"
+    target = target_dir / f"{apply_mode_suffix(stem, suffix)}{extension}"
     return unique_output_path(target, reserved)
 
 

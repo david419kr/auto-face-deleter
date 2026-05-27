@@ -24,6 +24,16 @@ if /I "%~1"=="-w" (
     shift
     goto loop
 )
+if /I "%~1"=="--crop" (
+    set "MODE_ARGS=%MODE_ARGS% --crop"
+    shift
+    goto loop
+)
+if /I "%~1"=="-c" (
+    set "MODE_ARGS=%MODE_ARGS% --crop"
+    shift
+    goto loop
+)
 set "HAD_INPUT=1"
 call :process_one "%~1"
 if errorlevel 1 goto failed

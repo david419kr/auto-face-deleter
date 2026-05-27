@@ -3,6 +3,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import copy2
 
 import cv2
 import numpy as np
@@ -302,6 +303,83 @@ def fill_face(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.ndarray, 
     return blend_field(rgb, field, face_mask, feature_mask)
 
 
+def valid_keypoint_xy(keypoints: np.ndarray, min_score: float = 0.1) -> np.ndarray:
+    if keypoints.size == 0:
+        return np.empty((0, 2), dtype=np.float32)
+    if keypoints.shape[1] >= 3:
+        valid = keypoints[:, 2] >= min_score
+        pts = keypoints[valid, :2]
+        if pts.shape[0] >= 4:
+            return pts.astype(np.float32)
+    return keypoints[:, :2].astype(np.float32)
+
+
+def compute_head_crop_box(width: int, height: int, keypoints: np.ndarray) -> tuple[int, int, int, int, str]:
+    contour = keypoints[:11] if keypoints.shape[0] >= 11 else keypoints
+    pts = valid_keypoint_xy(contour)
+    if pts.shape[0] == 0:
+        raise RuntimeError("Cannot crop without face keypoints.")
+
+    x0, y0 = pts.min(axis=0)
+    x1, y1 = pts.max(axis=0)
+    span = max(1.0, float(max(x1 - x0, y1 - y0)))
+    margin = max(4.0, span * 0.08)
+    cx, cy = pts.mean(axis=0)
+
+    edge_distances = {
+        "left": float(cx) / max(1, width),
+        "right": float(width - cx) / max(1, width),
+        "top": float(cy) / max(1, height),
+        "bottom": float(height - cy) / max(1, height),
+    }
+    edge = min(edge_distances, key=edge_distances.get)
+
+    if edge == "top":
+        cut = int(np.ceil(y1 + margin))
+        cut = int(np.clip(cut, 1, height - 1))
+        return 0, cut, width, height, edge
+    if edge == "bottom":
+        cut = int(np.floor(y0 - margin))
+        cut = int(np.clip(cut, 1, height - 1))
+        return 0, 0, width, cut, edge
+    if edge == "left":
+        cut = int(np.ceil(x1 + margin))
+        cut = int(np.clip(cut, 1, width - 1))
+        return cut, 0, width, height, edge
+
+    cut = int(np.floor(x0 - margin))
+    cut = int(np.clip(cut, 1, width - 1))
+    return 0, 0, cut, height, edge
+
+
+def save_crop_debug_image(
+    image_rgb: np.ndarray,
+    pred: dict,
+    crop_box: tuple[int, int, int, int],
+    edge: str,
+    debug_dir: Path,
+    stem: str,
+) -> None:
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    overlay = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    bbox = np.round(np.asarray(pred["bbox"][:4])).astype(int)
+    cv2.rectangle(overlay, tuple(bbox[:2]), tuple(bbox[2:]), (0, 255, 0), 2)
+    for idx, (x, y, score) in enumerate(np.asarray(pred["keypoints"], dtype=np.float32)):
+        color = (0, 0, 255) if score >= 0.3 else (0, 255, 255)
+        pt = (int(round(x)), int(round(y)))
+        cv2.circle(overlay, pt, 4, color, -1)
+        cv2.putText(overlay, str(idx), (pt[0] + 4, pt[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+
+    x0, y0, x1, y1 = crop_box
+    if edge in {"left", "right"}:
+        x = x0 if edge == "left" else x1
+        cv2.line(overlay, (x, 0), (x, image_rgb.shape[0] - 1), (255, 0, 255), 3)
+    else:
+        y = y0 if edge == "top" else y1
+        cv2.line(overlay, (0, y), (image_rgb.shape[1] - 1, y), (255, 0, 255), 3)
+    cv2.imwrite(str(debug_dir / f"{stem}_crop_debug.png"), overlay)
+
+
 def save_debug_images(
     image_rgb: np.ndarray,
     result_rgb: np.ndarray,
@@ -367,6 +445,23 @@ class HystsFaceDeleter:
         alpha = rgba[:, :, 3].copy()
 
         predictions = sorted(predictions, key=lambda item: float(item["bbox"][4]), reverse=True)
+        raw_count = len(predictions)
+        if self.options.crop:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if raw_count != 1:
+                if image_path.resolve() != output_path.resolve():
+                    copy2(image_path, output_path)
+                return raw_count
+
+            keypoints = np.asarray(predictions[0]["keypoints"], dtype=np.float32)
+            crop_box_with_edge = compute_head_crop_box(rgba_image.width, rgba_image.height, keypoints)
+            crop_box = crop_box_with_edge[:4]
+            edge = crop_box_with_edge[4]
+            rgba_image.crop(crop_box).save(output_path, format="PNG")
+            if self.options.save_debug and debug_dir is not None:
+                save_crop_debug_image(original_rgb, predictions[0], crop_box, edge, debug_dir, output_path.stem)
+            return raw_count
+
         if self.options.max_faces is not None:
             predictions = predictions[: self.options.max_faces]
 

@@ -9,4 +9,5 @@ class ProcessOptions:
     save_debug: bool
     max_faces: int | None
     white: bool = False
+    crop: bool = False
     device: str = "cuda"
