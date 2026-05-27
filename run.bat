@@ -50,7 +50,7 @@ goto done
 
 :process_one
 echo Processing "%~1" to output\ ...
-uv run afd process "%~1" --output output --recursive %MODE_ARGS% --save-debug
+uv run afd process "%~1" --output output --recursive %MODE_ARGS%
 exit /b %errorlevel%
 
 :failed
