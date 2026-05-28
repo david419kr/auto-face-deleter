@@ -38,35 +38,10 @@ Put images in `input\`, then run:
 run.bat
 ```
 
-Results are saved to `output\`.
+Choose a mode with the arrow keys and Enter. Results are saved to `output\`.
 
-White fill mode:
-
-```bat
-run-white.bat
-```
-
-Keep the original mouth and lower face:
-
-```bat
-run-exclude-mouth.bat
-run-white-exclude-mouth.bat
-```
-
-Remove only eyes and eyebrows:
-
-```bat
-run-eye-only.bat
-run-white-eye-only.bat
-```
-
-Head crop mode:
-
-```bat
-run-crop.bat
-```
-
-You can also drag and drop image files or folders onto any `run*.bat` file.
+You can also drag and drop image files or folders onto `run.bat`.
+If command-line arguments are passed, the menu is skipped.
 
 ## CLI
 

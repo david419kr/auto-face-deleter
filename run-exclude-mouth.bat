@@ -1,6 +1,0 @@
-@echo off
-setlocal
-cd /d "%~dp0"
-
-call run.bat --exclude-mouth %*
-exit /b %errorlevel%
