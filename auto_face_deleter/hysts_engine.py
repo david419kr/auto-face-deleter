@@ -187,6 +187,84 @@ def landmark_masks(shape: tuple[int, int], keypoints: np.ndarray) -> tuple[np.nd
     return face, feature
 
 
+def eye_only_mask(shape: tuple[int, int], keypoints: np.ndarray, face_mask: np.ndarray) -> np.ndarray:
+    height, width = shape
+    pts = keypoints[:, :2].astype(np.float32)
+    face_width = max(1.0, float(np.linalg.norm(pts[4] - pts[0])))
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    eye_brow_pairs = (
+        ([11, 12, 13, 14, 15, 16], [5, 6, 7]),
+        ([17, 18, 19, 20, 21, 22], [8, 9, 10]),
+    )
+    for eye_group, brow_group in eye_brow_pairs:
+        bridge_pts = pts[eye_group + brow_group]
+        center = bridge_pts.mean(axis=0)
+        expanded = center + (bridge_pts - center) * 1.10
+        hull = cv2.convexHull(np.round(expanded).astype(np.int32))
+        cv2.fillConvexPoly(mask, hull, 255)
+
+    center_bridge_pts = pts[[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]]
+    center = center_bridge_pts.mean(axis=0)
+    expanded = center + (center_bridge_pts - center) * 1.04
+    hull = cv2.convexHull(np.round(expanded).astype(np.int32))
+    cv2.fillConvexPoly(mask, hull, 255)
+
+    for group in ([11, 12, 13, 14, 15, 16], [17, 18, 19, 20, 21, 22]):
+        eye_pts = pts[group]
+        x0, y0 = eye_pts.min(axis=0)
+        x1, y1 = eye_pts.max(axis=0)
+        bw, bh = x1 - x0, y1 - y0
+        pad_x = max(4.0, bw * 0.30, face_width * 0.010)
+        pad_y = max(4.0, bh * 0.34, face_width * 0.012)
+        cv2.ellipse(
+            mask,
+            (int(round((x0 + x1) / 2)), int(round((y0 + y1) / 2))),
+            (int(round((bw / 2) + pad_x)), int(round((bh / 2) + pad_y))),
+            0,
+            0,
+            360,
+            255,
+            -1,
+        )
+
+    brow_thickness = max(8, int(round(face_width * 0.045)))
+    brow_pad_y = max(4, int(round(face_width * 0.018)))
+    for group in ([5, 6, 7], [8, 9, 10]):
+        brow_pts = pts[group]
+        brow = np.round(brow_pts).astype(np.int32)
+        cv2.polylines(mask, [brow], False, 255, brow_thickness, cv2.LINE_AA)
+        for x, y in brow_pts:
+            cv2.ellipse(
+                mask,
+                (int(round(x)), int(round(y))),
+                (brow_thickness, brow_pad_y + brow_thickness // 3),
+                0,
+                0,
+                360,
+                255,
+                -1,
+            )
+
+    nose = pts[23]
+    protect = np.zeros((height, width), dtype=np.uint8)
+    nose_radius = max(5, int(round(face_width * 0.035)))
+    cv2.ellipse(
+        protect,
+        (int(round(nose[0])), int(round(nose[1]))),
+        (nose_radius, max(4, nose_radius // 2)),
+        0,
+        0,
+        360,
+        255,
+        -1,
+    )
+
+    mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+    mask[protect > 0] = 0
+    return cv2.bitwise_and(mask, face_mask) > 0
+
+
 def mouth_preserve_mask(keypoints: np.ndarray, face_mask: np.ndarray) -> np.ndarray:
     height, width = face_mask.shape
     pts = keypoints[:, :2].astype(np.float32)
@@ -323,6 +401,17 @@ def composite_alpha(mask: np.ndarray, feature_mask: np.ndarray) -> np.ndarray:
 def fill_face(rgb: np.ndarray, face_mask: np.ndarray, feature_mask: np.ndarray, white: bool = False) -> np.ndarray:
     field = make_white_field(rgb) if white else make_skin_field(rgb, face_mask, feature_mask)
     return blend_field(rgb, field, face_mask, feature_mask)
+
+
+def fill_region(
+    rgb: np.ndarray,
+    sample_mask: np.ndarray,
+    fill_mask: np.ndarray,
+    feature_mask: np.ndarray,
+    white: bool = False,
+) -> np.ndarray:
+    field = make_white_field(rgb) if white else make_skin_field(rgb, sample_mask, feature_mask)
+    return blend_field(rgb, field, fill_mask, feature_mask)
 
 
 def valid_keypoint_xy(keypoints: np.ndarray, min_score: float = 0.1) -> np.ndarray:
@@ -491,24 +580,36 @@ class HystsFaceDeleter:
         for index, pred in enumerate(predictions):
             keypoints = np.asarray(pred["keypoints"], dtype=np.float32)
             geometry, feature = landmark_masks(result_rgb.shape[:2], keypoints)
-            mouth_mask = (
-                mouth_preserve_mask(keypoints, geometry)
-                if self.options.exclude_mouth
-                else np.zeros(result_rgb.shape[:2], dtype=bool)
-            )
-            geometry_mask = (geometry > 0) & ~mouth_mask
-            feature_mask = (feature > 0) & ~mouth_mask
-            face, hair = refine_face_mask(result_rgb, geometry_mask, feature_mask)
-            result_rgb = fill_face(result_rgb, face, feature_mask, white=self.options.white)
-            if self.options.exclude_mouth:
-                result_rgb[mouth_mask] = original_rgb[mouth_mask]
+            if self.options.eye_only:
+                feature_mask = eye_only_mask(result_rgb.shape[:2], keypoints, geometry)
+                face = feature_mask
+                hair = np.zeros_like(feature_mask, dtype=bool)
+                result_rgb = fill_region(
+                    result_rgb,
+                    geometry > 0,
+                    feature_mask,
+                    feature_mask,
+                    white=self.options.white,
+                )
+            else:
+                mouth_mask = (
+                    mouth_preserve_mask(keypoints, geometry)
+                    if self.options.exclude_mouth
+                    else np.zeros(result_rgb.shape[:2], dtype=bool)
+                )
+                geometry_mask = (geometry > 0) & ~mouth_mask
+                feature_mask = (feature > 0) & ~mouth_mask
+                face, hair = refine_face_mask(result_rgb, geometry_mask, feature_mask)
+                result_rgb = fill_face(result_rgb, face, feature_mask, white=self.options.white)
+                if self.options.exclude_mouth:
+                    result_rgb[mouth_mask] = original_rgb[mouth_mask]
             faces.append(
                 FaceDebug(
                     index=index,
                     bbox=list(pred["bbox"]),
                     keypoints=keypoints,
                     face_mask=face,
-                    feature_mask=feature > 0,
+                    feature_mask=feature_mask,
                     hair_mask=hair,
                 )
             )

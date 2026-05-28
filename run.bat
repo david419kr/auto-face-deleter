@@ -44,6 +44,16 @@ if /I "%~1"=="-m" (
     shift
     goto loop
 )
+if /I "%~1"=="--eye-only" (
+    set "MODE_ARGS=%MODE_ARGS% --eye-only"
+    shift
+    goto loop
+)
+if /I "%~1"=="-e" (
+    set "MODE_ARGS=%MODE_ARGS% --eye-only"
+    shift
+    goto loop
+)
 set "HAD_INPUT=1"
 call :process_one "%~1"
 if errorlevel 1 goto failed

@@ -34,14 +34,25 @@ MODE_SUFFIXES = (
     "_faceless-exclude-mouth",
     "_faceless-white",
     "_faceless",
+    "_eye-white",
+    "_eye",
     "_crop",
     "_skipped",
 )
 
 
-def mode_output_suffix(white: bool = False, crop: bool = False, exclude_mouth: bool = False) -> str:
+def mode_output_suffix(
+    white: bool = False,
+    crop: bool = False,
+    exclude_mouth: bool = False,
+    eye_only: bool = False,
+) -> str:
     if crop:
         return "_crop"
+    if white and eye_only:
+        return "_eye-white"
+    if eye_only:
+        return "_eye"
     if white and exclude_mouth:
         return "_faceless-white-exclude-mouth"
     if exclude_mouth:

@@ -11,4 +11,5 @@ class ProcessOptions:
     white: bool = False
     crop: bool = False
     exclude_mouth: bool = False
+    eye_only: bool = False
     device: str = "cuda"

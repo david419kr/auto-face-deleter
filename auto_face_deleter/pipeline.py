@@ -18,7 +18,12 @@ def process_path(input_path: Path, output: Path, options: ProcessOptions) -> tup
     processed = 0
     faces = 0
     debug_root = output / "debug" if output.suffix == "" else output.parent / "debug"
-    suffix = mode_output_suffix(white=options.white, crop=options.crop, exclude_mouth=options.exclude_mouth)
+    suffix = mode_output_suffix(
+        white=options.white,
+        crop=options.crop,
+        exclude_mouth=options.exclude_mouth,
+        eye_only=options.eye_only,
+    )
     reserved_outputs: set[Path] = set()
 
     for image_path in images:
